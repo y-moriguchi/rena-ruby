@@ -1,7 +1,20 @@
 module Rena
     class Rena
         def initialize(ignore = nil, keys = nil)
-            @ignore = lambda do |match, index| index end
+            @ignoreOrg = ignore
+            if ignore then
+                @ignore = lambda do |match, index, attr|
+                    matched, indexNew, attrNew = ignore.call(match, index, attr)
+                    if matched.nil? then
+                        index
+                    else
+                        indexNew
+                    end
+                end
+            else
+                @ignore = lambda do |match, index, attr| index end
+            end
+            @keys = keys
         end
 
         def isEnd()
@@ -87,6 +100,49 @@ module Rena
             lookaheadNot(lookaheadNot(exp))
         end
 
+        def attr(val)
+            action("", lambda do |match, index, attr| val end)
+        end
+
+        def real()
+            action(
+                /[\+\-]?(?:[0-9]+(?:\.[0-9]+)?|\.[0-9]+)(?:[eE][\+\-]?[0-9]+)?/,
+                lambda do |match, index, attr| match.to_f end)
+        end
+
+        def key(key)
+            skipKeys = []
+            if @keys.nil? then
+                raise "Keys are not set"
+            end
+            @keys.each do |optKey|
+                if key.length < optKey.length and key == optKey[0, key.length] then
+                    skipKeys.push(optKey)
+                end
+            end
+            concat(lookaheadNot(choice(*skipKeys)), key)
+        end
+
+        def notKey()
+            if @keys.nil? then
+                raise "Keys are not set"
+            end
+            lookaheadNot(choice(*@keys))
+        end
+
+        def equalsId(key)
+            notSkip = lambda do |match, index, attr| index end
+            if not @ignoreOrg and not @keys then
+                wrap(key)
+            elsif @ignoreOrg and not @keys then
+                concatSkip(notSkip, key, choice(isEnd(), lookahead(@ignore)))
+            elsif not @ignoreOrg and @keys then
+                concatSkip(notSkip, key, choice(isEnd(), lookaheadNot(notKey())))
+            else
+                concatSkip(notSkip, key, choice(isEnd(), lookahead(@ignore), lookaheadNot(notKey())))
+            end
+        end
+
         private
         def wrap(pattern)
             if pattern.is_a?(String) then
@@ -121,7 +177,7 @@ module Rena
                     if matched.nil? then
                         return [nil, nil, nil]
                     else
-                        indexNew = skipSpace.call(match, indexNew)
+                        indexNew = skipSpace.call(match, indexNew, attrNew)
                     end
                 end
                 [match[index, indexNew - index], indexNew, attrNew]
