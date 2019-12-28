@@ -1,280 +1,132 @@
-#
-# rena-ruby
-#
-# Copyright (c) 2018 Yuichiro MORIGUCHI
-#
-# This software is released under the MIT License.
-# http://opensource.org/licenses/mit-license.php
-#
 module Rena
-	def Rena(ignore = nil)
-		RenaFactory.new(ignore)
-	end
+    class Rena
+        def initialize(ignore = nil, keys = nil)
+            @ignore = lambda do |match, index| index end
+        end
 
-	class RenaFactory
-		def initialize(ignore)
-			@ignore = ignore
-		end
+        def isEnd()
+            lambda do |match, index, attr|
+                if index >= match.length then
+                    ["", index, attr]
+                else
+                    [nil, nil, nil]
+                end
+            end
+        end
 
-		def find(pattern)
-			RenaInstance.new(self).find(pattern)
-		end
+        def concat(*exps)
+            concatSkip(@ignore, *exps)
+        end
 
-		def alt(*alternation)
-			RenaInstance.new(self).alt(*alternation)
-		end
+        def choice(*exps)
+            lambda do |match, index, attr|
+                exps.each do |exp|
+                    matched, indexNew, attrNew = wrap(exp).call(match, index, attr)
+                    if !matched.nil? then
+                        return [matched, indexNew, attrNew]
+                    end
+                end
+                [nil, nil, nil]
+            end
+        end
 
-		def times(countmin, countmax, pattern, action = nil, init = nil)
-			RenaInstance.new(self).findTimes(countmin, countmax, pattern, action, init)
-		end
+        def action(exp, action)
+            wrapped = wrap(exp)
+            lambda do |match, index, attr|
+                matched, indexNew, attrNew = wrapped.call(match, index, attr)
+                if matched.nil? then
+                    [nil, nil, nil]
+                else
+                    [matched, indexNew, action.call(matched, attrNew, attr)]
+                end
+            end
+        end
 
-		def atLeast(count, pattern, action = nil, init = nil)
-			RenaInstance.new(self).findAtLeast(count, pattern, action, init)
-		end
+        def lookaheadNot(exp)
+            wrapped = wrap(exp)
+            lambda do |match, index, attr|
+                matched, indexNew, attrNew = wrapped.call(match, index, attr)
+                if matched.nil? then
+                    ["", index, attr]
+                else
+                    [nil, nil, nil]
+                end
+            end
+        end
 
-		def atMost(count, pattern, action = nil, init = nil)
-			RenaInstance.new(self).findAtMost(count, pattern, action, init)
-		end
+        def letrec(*funcs)
+            fg = lambda do |g| g.call(g) end
+            fp = lambda do |p|
+                res = []
+                funcs.each do |func|
+                    (lambda do |func|
+                        res.push(lambda do |match, index, attr|
+                            (func.call(*(p.call(p)))).call(match, index, attr)
+                        end)
+                    end).call(func)
+                end
+                res
+            end
+            (fg.call(fp))[0]
+        end
 
-		def maybe(pattern, action = nil, init = nil)
-			RenaInstance.new(self).findMaybe(pattern, action, init)
-		end
+        def zeroOrMore(exp)
+            wrapped = wrap(exp)
+            letrec(lambda do |y| choice(concat(wrapped, y), "") end)
+        end
 
-		def zeroOrMore(pattern, action = nil, init = nil)
-			RenaInstance.new(self).findZeroOrMore(pattern, action, init)
-		end
+        def oneOrMore(exp)
+            concat(exp, zeroOrMore(exp))
+        end
 
-		def oneOrMore(pattern, action = nil, init = nil)
-			RenaInstance.new(self).findOneOrMore(pattern, action, init)
-		end
+        def opt(exp)
+            choice(exp, "")
+        end
 
-		def delimit(pattern, delimiter, action, init)
-			RenaInstance.new(self).findDelimit(pattern, delimiter, action, init)
-		end
+        def lookahead(exp)
+            lookaheadNot(lookaheadNot(exp))
+        end
 
-		attr_reader :ignore
-	end
+        private
+        def wrap(pattern)
+            if pattern.is_a?(String) then
+                lambda do |str, index, attr| 
+                    if str[index, str.length].start_with?(pattern) then
+                        [pattern, index + pattern.length, attr]
+                    else
+                        [nil, nil, nil]
+                    end
+                end
+            elsif pattern.is_a?(Regexp) then
+                lambda do |str, index, attr| 
+                    strMatch = str[index, str.length - index]
+                    result = str.match(pattern, index)
+                    if result.nil? || result.begin(0) > 0 then
+                        [nil, nil, nil]
+                    else
+                        [result[0], index + result[0].length, attr]
+                    end
+                end
+            else
+                pattern
+            end
+        end
 
-	class RenaInstance
-		def initialize(factory)
-			@factory = factory
-			@patterns = []
-		end
-
-		def find(pattern, action = nil)
-			@patterns.push(lambda do |str, index, attribute|
-				strnew, indexnew, attributenew = wrap(pattern).call(str, index, attribute)
-				[strnew, indexnew, wrapAction(action).call(strnew, attributenew, attribute)]
-			end)
-			self
-		end
-
-		def +(pattern)
-			find(pattern)
-		end
-
-		def alt(*alternation)
-			@patterns.push(lambda do |str, index, attribute|
-				alternation.each do |pattern|
-					result = wrap(pattern).call(str, index, attribute)
-					if !result.nil? then
-						return result
-					end
-				end
-				nil
-			end)
-			self
-		end
-
-		def |(pattern)
-			@factory.alt(self, pattern)
-		end
-
-		def times(countmin, countmax, action = nil, init = nil)
-			@factory.times(countmin, countmax, self, action, init)
-		end
-
-		def atLeast(count, action = nil, init = nil)
-			@factory.atLeast(count, self, action, init)
-		end
-
-		def atMost(count, action = nil, init = nil)
-			@factory.atMost(count, self, action, init)
-		end
-
-		def maybe(action = nil, init = nil)
-			@factory.maybe(self, action, init)
-		end
-
-		def zeroOrMore(action = nil, init = nil)
-			@factory.zeroOrMore(self, action, init)
-		end
-
-		def oneOrMore(action = nil, init = nil)
-			@factory.oneOrMore(self, action, init)
-		end
-
-		def delimit(delimiter, action = nil, init = nil)
-			@factory.delimit(self, delimiter, action, init)
-		end
-
-		def findTimes(countmin, countmax, pattern, action, init)
-			@patterns.push(lambda do |str, index, attribute|
-				wrappedPtn = wrap(pattern)
-				wrappedAction = wrapAction(action)
-				count = 0
-				indexnew = index
-				inherited = if init.nil? then attribute else init end
-				while countmax < 0 || count < countmax
-					result = wrappedPtn.call(str, indexnew, inherited)
-					if result.nil? then
-						break
-					end
-					strnew, indexnew, attributenew = result
-					inherited = wrappedAction.call(strnew, attributenew, inherited)
-					indexnew = skipSpace(str, indexnew)
-					count += 1
-				end
-				if count < countmin then nil else [str, indexnew, inherited] end
-			end)
-			self
-		end
-
-		def findAtLeast(count, pattern, action = nil, init = nil)
-			findTimes(count, -1, pattern, action, init)
-		end
-
-		def findAtMost(count, pattern, action = nil, init = nil)
-			findTimes(0, count, pattern, action, init)
-		end
-
-		def findMaybe(pattern, action = nil)
-			findTimes(0, 1, pattern, action, nil)
-		end
-
-		def findZeroOrMore(pattern, action = nil, init = nil)
-			findTimes(0, -1, pattern, action, init)
-		end
-
-		def findOneOrMore(pattern, action = nil, init = nil)
-			findTimes(1, -1, pattern, action, init)
-		end
-
-		def findDelimit(pattern, delimiter, action, init)
-			@patterns.push(lambda do |str, index, attribute|
-				wrappedPtn = wrap(pattern)
-				wrappedDelimit = wrap(delimiter)
-				wrappedAction = wrapAction(action)
-				inherited = if init.nil? then attribute else init end
-
-				result = wrappedPtn.call(str, index, inherited)
-				if result.nil? then
-					return nil
-				end
-				strnew, indexnew, attributenew = result
-				inherited = wrappedAction.call(strnew, attributenew, inherited)
-				indexnew = skipSpace(str, indexnew)
-				loop do
-					resultDelimit = wrappedDelimit.call(str, indexnew, inherited)
-					if resultDelimit.nil? then
-						return [str, indexnew, inherited]
-					end
-					strnew, indexnew, attributenew = resultDelimit
-					indexnew = skipSpace(str, indexnew)
-					result = wrappedPtn.call(str, indexnew, inherited)
-					if result.nil? then
-						return nil
-					end
-					strnew, indexnew, attributenew = result
-					inherited = wrappedAction.call(strnew, attributenew, inherited)
-					indexnew = skipSpace(str, indexnew)
-				end
-			end)
-			self
-		end
-
-		def match(str, index = 0, attribute = nil)
-			strres, indexnew, attributenew = "", index, attribute
-			@patterns.each do |pattern|
-				strnew, indexnew, attributenew = pattern.call(str, indexnew, attributenew)
-				if strnew.nil?
-					return nil
-				end
-				strres += strnew
-			end
-			[strres, indexnew, attributenew]
-		end
-
-		def lookahead(pattern, positive = true)
-			@patterns.push(lambda do |str, index, attribute|
-				strnew, indexnew, attributenew = wrap(pattern).call(str, index, attribute)
-				if strnew.nil? != positive then ["", index, attribute] else nil end
-			end)
-			self
-		end
-
-		def lookaheadNot(pattern, positive)
-			lookahead(pattern, false)
-		end
-
-		def cond(condition)
-			@patterns.push(lambda do |str, index, attribute|
-				if condition.call(attribute) then ["", index, attribute] else nil end
-			end)
-			self
-		end
-
-		def attribute(attribute)
-			@patterns.push(lambda { |str, index, ignored| ["", index, attribute] })
-			self
-		end
-
-		def action(action)
-			@patterns.push(lambda { |str, index, ignored| ["", index, action.call(attribute)] })
-			self
-		end
-
-		private
-		def wrap(pattern)
-			if pattern.is_a?(String) then
-				lambda do |str, index, attribute| 
-					if str[index, str.length].start_with?(pattern) then
-						[pattern, index + pattern.length, nil]
-					else
-						nil
-					end
-				end
-			elsif pattern.is_a?(Regexp) then
-				lambda do |str, index, attribute| 
-					result = str.match(pattern, index)
-					if result.nil? || result.begin(0) != index then
-						nil
-					else
-						[result[0], index + result[0].length, nil]
-					end
-				end
-			elsif pattern.is_a?(RenaInstance) then
-				lambda {|str, index, attribute| pattern.match(str, index, attribute) }
-			else
-				pattern
-			end
-		end
-
-		def wrapAction(action)
-			if action.nil? then
-				lambda {|match, attribute, inherited| attribute}
-			else
-				action
-			end
-		end
-
-		def skipSpace(str, index)
-			if !@factory.ignore.nil? then
-				ignore1, indexnew, ignore3 = @factory.ignore.call(str, index, nil)
-				indexnew
-			else
-				index
-			end
-		end
-	end
+        def concatSkip(skipSpace, *exps)
+            lambda do |match, index, attr|
+                indexNew = index
+                attrNew = attr
+                exps.each do |exp|
+                    matched, indexNew, attrNew = wrap(exp).call(match, indexNew, attrNew)
+                    if matched.nil? then
+                        return [nil, nil, nil]
+                    else
+                        indexNew = skipSpace.call(match, indexNew)
+                    end
+                end
+                [match[index, indexNew - index], indexNew, attrNew]
+            end
+        end
+    end
 end
+
