@@ -168,7 +168,7 @@ The argument of r.letrec function are functions, and return value is the return 
 
 Below example matches balanced parenthesis.
 ```ruby
-var paren = r.letrec(
+paren = r.letrec(
   lambda do |paren|
     r.concat("(", r.opt(paren), ")"));
   end
