@@ -1,10 +1,13 @@
+#
+# This source code is under the Unlicense
+#
 module Rena
     class Rena
         def initialize(ignore = nil, keys = nil)
-            @ignoreOrg = ignore
+            @ignoreOrg = wrap(ignore)
             if ignore then
                 @ignore = lambda do |match, index, attr|
-                    matched, indexNew, attrNew = ignore.call(match, index, attr)
+                    matched, indexNew, attrNew = @ignoreOrg.call(match, index, attr)
                     if matched.nil? then
                         index
                     else
@@ -135,11 +138,11 @@ module Rena
             if not @ignoreOrg and not @keys then
                 wrap(key)
             elsif @ignoreOrg and not @keys then
-                concatSkip(notSkip, key, choice(isEnd(), lookahead(@ignore)))
+                concatSkip(notSkip, key, choice(isEnd(), lookahead(@ignoreOrg)))
             elsif not @ignoreOrg and @keys then
                 concatSkip(notSkip, key, choice(isEnd(), lookaheadNot(notKey())))
             else
-                concatSkip(notSkip, key, choice(isEnd(), lookahead(@ignore), lookaheadNot(notKey())))
+                concatSkip(notSkip, key, choice(isEnd(), lookahead(@ignoreOrg), lookaheadNot(notKey())))
             end
         end
 
@@ -155,9 +158,8 @@ module Rena
                 end
             elsif pattern.is_a?(Regexp) then
                 lambda do |str, index, attr| 
-                    strMatch = str[index, str.length - index]
                     result = str.match(pattern, index)
-                    if result.nil? || result.begin(0) > 0 then
+                    if result.nil? || result.begin(0) > index then
                         [nil, nil, nil]
                     else
                         [result[0], index + result[0].length, attr]
