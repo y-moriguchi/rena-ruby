@@ -71,19 +71,19 @@ module Rena
         end
 
         def letrec(*funcs)
-            fg = lambda do |g| g.call(g) end
-            fp = lambda do |p|
-                res = []
-                funcs.each do |func|
-                    (lambda do |func|
-                        res.push(lambda do |match, index, attr|
-                            (func.call(*(p.call(p)))).call(match, index, attr)
-                        end)
-                    end).call(func)
-                end
-                res
+            delays = []
+            memo = []
+            for i in 0..funcs.length - 1 do
+                (lambda do |i|
+                    delays.push(lambda do |match, index, attr|
+                        if not memo[i] then
+                            memo[i] = funcs[i].call(*delays)
+                        end
+                        memo[i].call(match, index, attr)
+                    end)
+                end).call(i)
             end
-            (fg.call(fp))[0]
+            delays[0]
         end
 
         def zeroOrMore(exp)
